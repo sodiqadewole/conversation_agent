@@ -62,6 +62,15 @@ class KnowledgeIndexStats:
     chunks: int
 
 
+@dataclass(frozen=True)
+class KnowledgeSearchResult:
+    citation: str
+    passage: str
+    bm25_score: float
+    matched_terms: tuple[str, ...]
+    query_coverage: float
+
+
 def knowledge_poll_interval_seconds() -> float:
     """Return the configured positive knowledge polling interval."""
     configured_value = os.getenv("KNOWLEDGE_POLL_INTERVAL_SECONDS")
@@ -335,11 +344,13 @@ def _query_terms(query: str) -> list[str]:
     ]
 
 
-def search_knowledge_index(query: str, max_results: int = 5) -> str | None:
-    """Search indexed document chunks, refreshing changed files first."""
+def search_knowledge_results(
+    query: str, max_results: int = 5
+) -> list[KnowledgeSearchResult]:
+    """Search indexed chunks and return passages with lexical evidence metadata."""
     terms = _query_terms(query)
     if not terms:
-        return None
+        return []
     if not 1 <= max_results <= MAX_RESULTS:
         raise ValueError(f"max_results must be between 1 and {MAX_RESULTS}.")
 
@@ -350,7 +361,9 @@ def search_knowledge_index(query: str, max_results: int = 5) -> str | None:
         rows = connection.execute(
             """
             SELECT path, heading,
-                   snippet(chunks, 2, '', '', ' ... ', 80) AS passage
+                   snippet(chunks, 2, '', '', ' ... ', 80) AS passage,
+                   bm25(chunks) AS bm25_score,
+                   heading || ' ' || content AS searchable_text
             FROM chunks
             WHERE chunks MATCH ?
             ORDER BY bm25(chunks)
@@ -359,9 +372,32 @@ def search_knowledge_index(query: str, max_results: int = 5) -> str | None:
             (fts_query, max_results),
         ).fetchall()
 
-    if not rows:
+    results: list[KnowledgeSearchResult] = []
+    for path, heading, passage, bm25_score, searchable_text in rows:
+        normalized_text = searchable_text.casefold()
+        matched_terms = tuple(
+            term
+            for term in dict.fromkeys(terms)
+            if re.search(rf"\b{re.escape(term)}\b", normalized_text)
+        )
+        citation = f"{path}{f' > {heading}' if heading else ''}"
+        results.append(
+            KnowledgeSearchResult(
+                citation=citation,
+                passage=passage.strip(),
+                bm25_score=float(bm25_score),
+                matched_terms=matched_terms,
+                query_coverage=len(matched_terms) / len(set(terms)),
+            )
+        )
+    return results
+
+
+def search_knowledge_index(query: str, max_results: int = 5) -> str | None:
+    """Search indexed document chunks and return attributed passages."""
+    results = search_knowledge_results(query, max_results)
+    if not results:
         return None
     return "\n\n".join(
-        f"[{path}{f' > {heading}' if heading else ''}] {passage.strip()}"
-        for path, heading, passage in rows
+        f"[{result.citation}] {result.passage}" for result in results
     )

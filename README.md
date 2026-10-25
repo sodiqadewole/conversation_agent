@@ -8,6 +8,8 @@ date/time and restricted local knowledge tools.
 For the complete retrieval algorithm, BM25 formulas, worked examples, and
 measured latency, see
 [`docs/knowledge-retrieval-algorithm.md`](docs/knowledge-retrieval-algorithm.md).
+For the agentic retrieval flow, evidence handling, and future work, see
+[`docs/agentic-rag-design.md`](docs/agentic-rag-design.md).
 
 ## Screenshots
 
@@ -72,8 +74,11 @@ Add trusted `.md`, `.txt`, and `.pdf` files to `knowledge/`. The lookup tool
 searches only that directory, ignores symbolic links, and never writes to the
 files. Markdown and text files are limited to 1 MB, and PDFs are limited to
 20 MB. Text PDFs are indexed by page; scanned image-only PDFs require OCR.
-Relevant passages are retrieved automatically for each user message, and the
-model can also call the lookup tool explicitly.
+Explicit local-document questions trigger an initial search; unrelated
+messages do not. The agent assesses the passages, can refine a weak or
+irrelevant query within a three-search budget, and says when local evidence
+does not establish an answer. It cites supporting retrieved passages inline;
+the interface resolves those citation IDs only against actual search results.
 Documents are split into heading-aware, word-counted passages and stored in a
 SQLite FTS5 index at `knowledge/.knowledge_index.sqlite3`. The index refreshes
 automatically when source files are added, edited, or removed, and rebuilds
@@ -114,6 +119,8 @@ by vLLM, input/output/total tokens, model name, finish reason, request ID, and
 server fingerprint. Token counts aggregate all model generations in the turn,
 including tool-call rounds. Latency includes local knowledge lookup and agent
 execution; it is measured by the app rather than reported by vLLM.
+The date/time tool uses the host's local timezone by default. Set the host
+timezone or ask for a specific IANA timezone to get a different local time.
 
 ## Configuration
 

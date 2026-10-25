@@ -11,12 +11,13 @@ import streamlit as st
 from agent import (
     AgentSettings,
     ResponseMetrics,
-    add_local_knowledge_context,
-    build_agent,
+    append_retrieval_sources_when_uncited,
     deduplicate_local_sources,
     extract_answer,
     extract_response_metrics,
+    invoke_agent,
     remove_model_local_sources,
+    resolve_verified_citations,
 )
 from knowledge_index import (
     knowledge_poll_interval_seconds,
@@ -147,28 +148,22 @@ if prompt := st.chat_input("Ask the agent anything"):
         {"role": message["role"], "content": message["content"]}
         for message in messages[-MAX_HISTORY_MESSAGES:]
     ]
-    langchain_messages, knowledge_sources = add_local_knowledge_context(
-        langchain_messages
-    )
-
     with st.chat_message("assistant"):
         try:
             with st.spinner("Thinking..."):
-                result = build_agent(settings).invoke(
-                    {"messages": langchain_messages},
-                    config={"recursion_limit": 10},
-                )
+                result = invoke_agent(settings, langchain_messages)
                 latency_ms = (time.perf_counter() - request_started_at) * 1000
                 answer = remove_model_local_sources(
                     extract_answer(result["messages"])
+                )
+                answer = resolve_verified_citations(answer, result["messages"])
+                answer = append_retrieval_sources_when_uncited(
+                    answer, result["messages"]
                 )
                 response_metrics = extract_response_metrics(
                     result["messages"],
                     latency_ms=latency_ms,
                 )
-                if knowledge_sources:
-                    citations = ", ".join(f"`{source}`" for source in knowledge_sources)
-                    answer = f"{answer}\n\n**Local sources:** {citations}"
         except Exception as error:
             st.error(
                 "The agent request failed. Confirm that the local API is running "

@@ -1,22 +1,38 @@
 from __future__ import annotations
 
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 import pytest
 
 import agent as agent_module
 from agent import (
     AgentSettings,
-    add_local_knowledge_context,
+    append_retrieval_sources_when_uncited,
     build_agent,
     deduplicate_local_sources,
     extract_answer,
+    extract_retrieval_citations,
     extract_response_metrics,
+    invoke_agent,
+    LOCAL_KNOWLEDGE_CUE,
     remove_model_local_sources,
+    resolve_verified_citations,
 )
 
 
 def test_default_model_is_qwen_vl() -> None:
     assert AgentSettings().model == "local-qwen-vl"
+
+
+@pytest.mark.parametrize(
+    ("message", "should_search"),
+    [
+        ("According to the local camera manual, how do I configure motion?", True),
+        ("What does the PDF say about motion alerts?", True),
+        ("What is the capital of France?", False),
+    ],
+)
+def test_local_document_cue(message: str, should_search: bool) -> None:
+    assert bool(LOCAL_KNOWLEDGE_CUE.search(message)) is should_search
 
 
 def test_agent_has_expected_tools(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -33,36 +49,6 @@ def test_agent_has_expected_tools(monkeypatch: pytest.MonkeyPatch) -> None:
         "current_date_time",
         "search_local_knowledge",
     }
-
-
-def test_add_local_knowledge_context_attaches_matching_source(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        agent_module,
-        "lookup_local_knowledge",
-        lambda query, max_results: "[facts.md] Verified local fact.",
-    )
-
-    prepared, sources = add_local_knowledge_context(
-        [{"role": "user", "content": "Tell me the verified fact"}]
-    )
-
-    assert prepared[0]["content"].startswith("Tell me the verified fact")
-    assert "[facts.md] Verified local fact." in prepared[0]["content"]
-    assert "<local_knowledge_reference>" in prepared[0]["content"]
-    assert sources == ["facts.md"]
-
-
-def test_add_local_knowledge_context_preserves_messages_without_match(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        agent_module, "lookup_local_knowledge", lambda query, max_results: None
-    )
-    messages = [{"role": "user", "content": "Hello"}]
-
-    assert add_local_knowledge_context(messages) == (messages, [])
 
 
 def test_extract_answer_returns_last_assistant_text() -> None:
@@ -108,6 +94,111 @@ def test_deduplicate_local_sources_keeps_final_verified_line() -> None:
 
     assert deduplicate_local_sources(answer) == (
         "Answer body.\n\n**Local sources:** verified.pdf > Page 4"
+    )
+
+
+def test_extract_retrieval_citations_uses_only_actual_tool_results() -> None:
+    messages = [
+        ToolMessage(
+            name="search_local_knowledge",
+            tool_call_id="call-1",
+            content=(
+                '{"status":"matched","results":['
+                '{"citation":"manual.pdf > Page 4"},'
+                '{"citation":"manual.pdf > Page 5"},'
+                '{"citation":"manual.pdf > Page 4"}]}'
+            ),
+        ),
+        ToolMessage(
+            name="current_date_time",
+            tool_call_id="call-2",
+            content="2026-01-01T00:00:00+00:00",
+        ),
+        ToolMessage(
+            name="search_local_knowledge",
+            tool_call_id="call-3",
+            content='{"status":"not_found","results":[]}',
+        ),
+    ]
+
+    assert extract_retrieval_citations(messages) == [
+        "manual.pdf > Page 4",
+        "manual.pdf > Page 5",
+    ]
+
+
+def test_extract_retrieval_citations_returns_empty_without_tool_call() -> None:
+    assert extract_retrieval_citations([AIMessage(content="General answer")]) == []
+
+
+def test_append_retrieval_sources_when_model_omits_inline_citations() -> None:
+    messages = [
+        ToolMessage(
+            name="search_local_knowledge",
+            tool_call_id="call-1",
+            content=(
+                '{"status":"matched","results":['
+                '{"citation":"manual.pdf > Page 4"}]}'
+            ),
+        )
+    ]
+
+    assert append_retrieval_sources_when_uncited("Answer.", messages) == (
+        "Answer.\n\n**Local sources:** `manual.pdf > Page 4`"
+    )
+
+
+def test_append_retrieval_sources_does_not_duplicate_inline_citation() -> None:
+    messages = [
+        ToolMessage(
+            name="search_local_knowledge",
+            tool_call_id="call-1",
+            content=(
+                '{"status":"matched","results":['
+                '{"citation":"manual.pdf > Page 4"}]}'
+            ),
+        )
+    ]
+
+    assert append_retrieval_sources_when_uncited(
+        "Answer [manual.pdf > Page 4].", messages
+    ) == "Answer [manual.pdf > Page 4]."
+
+
+def test_resolve_verified_citations_maps_only_retrieved_source_ids() -> None:
+    messages = [
+        ToolMessage(
+            name="search_local_knowledge",
+            tool_call_id="call-1",
+            content=(
+                '{"status":"matched","results":['
+                '{"source_id":"SRC-1234abcd",'
+                '"citation":"manual.pdf > Page 4"}]}'
+            ),
+        )
+    ]
+
+    assert resolve_verified_citations(
+        "Supported claim [SRC-1234abcd]. Unknown [SRC-deadbeef].",
+        messages,
+    ) == "Supported claim [manual.pdf > Page 4]. Unknown."
+
+
+def test_resolve_verified_citations_ignores_not_found_results() -> None:
+    messages = [
+        ToolMessage(
+            name="search_local_knowledge",
+            tool_call_id="call-1",
+            content=(
+                '{"status":"not_found","results":['
+                '{"source_id":"SRC-1234abcd",'
+                '"citation":"manual.pdf > Page 4"}]}'
+            ),
+        )
+    ]
+
+    assert resolve_verified_citations("Claim [SRC-1234abcd].", messages) == (
+        "Claim."
     )
 
 
