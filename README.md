@@ -9,6 +9,26 @@ For the complete retrieval algorithm, BM25 formulas, worked examples, and
 measured latency, see
 [`docs/knowledge-retrieval-algorithm.md`](docs/knowledge-retrieval-algorithm.md).
 
+## Screenshots
+
+### Answers grounded in local knowledge
+
+![Chat answers a question about camera motion detection and cites the source PDF pages](images/chat_1.png)
+
+### Supported knowledge file types
+
+![Chat explains supported Markdown, text, and PDF knowledge sources](images/chat_2.png)
+
+### Patent correction guidance
+
+![User asked about patent correction guidance](images/q5.png)
+![Chat summarizes patent correction options with citations from local references](images/chat_5.png)
+
+### Patent Examination Process
+
+![User asked about patent examination process](images/q6.png)
+![Chat summarizes patent examination process with PDF citations](images/chat_6.png)
+
 ## 1. Create an environment
 
 Python 3.11 or newer is recommended.
@@ -88,6 +108,12 @@ URL, model name, and API key can be changed in the sidebar.
 This project uses Streamlit's polling file watcher because recursively watching
 the local virtual environment and model files can exceed Linux's `inotify`
 watch limit.
+
+Each assistant response displays end-to-end request latency and, when returned
+by vLLM, input/output/total tokens, model name, finish reason, request ID, and
+server fingerprint. Token counts aggregate all model generations in the turn,
+including tool-call rounds. Latency includes local knowledge lookup and agent
+execution; it is measured by the app rather than reported by vLLM.
 
 ## Configuration
 
