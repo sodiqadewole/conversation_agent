@@ -4,9 +4,10 @@ __pycache__/
 .pytest_cache/
 *.py[cod]
 knowledge/.knowledge_index.sqlite3
-knowledge/*
+# knowledge/
 !knowledge/README.md
 .env
 .env.*
 !.env.example
 .streamlit/secrets.toml
+llm_api/REMOTE_ACCESS.md
